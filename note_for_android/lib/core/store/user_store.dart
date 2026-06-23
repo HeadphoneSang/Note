@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:note_for_android/core/network/http_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 用户信息模型
@@ -18,6 +19,17 @@ class UserInfo {
     this.avatar,
     this.phoneNumber,
   });
+
+  factory UserInfo.fromJson(Map<String, dynamic> json) {
+    return UserInfo(
+      id: json['id'] ?? 0,
+      account: json['account'] ?? 0,
+      gender: json['gender'] ?? '',
+      nickname: json['nickname'] ?? 'default_nickname',
+      avatar: json['avatar'] ?? 'default_avatar',
+      phoneNumber: json['phoneNumber'] ?? '000-0000-0000',
+    );
+  }
 }
 
 /// 全局用户状态管理
@@ -25,11 +37,19 @@ class UserInfo {
 class UserStore extends ChangeNotifier {
   static const _kTokenKey = 'user_token';
 
+  /// 全局引用，供 HttpClient 的 TokenProvider 静态调用
+  static UserStore? _instance;
+  static String? provideToken() => _instance?._token;
+
   // ---- 状态 ----
   UserInfo? _user;
   String? _token;
   bool _isLoggedIn = false;
   bool _initialized = false;
+
+  UserStore() {
+    _instance = this;
+  }
 
   // ---- Getter ----
   UserInfo? get user => _user;
@@ -41,9 +61,33 @@ class UserStore extends ChangeNotifier {
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     _token = prefs.getString(_kTokenKey);
-    _isLoggedIn = _token != null;
+
+    if (_token != null) {
+      // 有本地 token，尝试验证是否有效，同时获取用户信息
+      try {
+        final response = await HttpClient.instance.get<Map<String, dynamic>>(
+          '/user/token-info',
+          queryParameters: {'token': _token},
+        );
+
+        if (response.code == 200 && response.data != null) {
+          // token 有效
+          _user = UserInfo.fromJson(response.data!);
+          _isLoggedIn = true;
+          debugPrint('[UserStore] init() — token 验证通过');
+        } else if (response.code == 401) {
+          // token 失效
+          debugPrint('[UserStore] init() — token 失效: ${response.message}');
+          _token = null;
+          await prefs.remove(_kTokenKey);
+        }
+      } catch (e) {
+        // 网络错误（断网、超时等），不阻挡启动但也不标记登录
+        debugPrint('[UserStore] init() — 验证 token 时网络异常: $e');
+      }
+    }
     _initialized = true;
-    debugPrint('[UserStore] init() — token=${_token != null ? "已存在 ($_token)" : "无"}');
+    debugPrint('[UserStore] init() — isLoggedIn=$_isLoggedIn');
     notifyListeners();
   }
 

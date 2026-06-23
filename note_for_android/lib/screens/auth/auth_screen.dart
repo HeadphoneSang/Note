@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:note_for_android/core/network/http_client.dart';
 import 'package:provider/provider.dart';
 import '../../core/store/user_store.dart';
 
@@ -24,6 +25,24 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
+  Future<void> _handlerLoginResponse(
+    ApiResponse<Map<String, dynamic>> response,
+  ) async {
+    if (response.code == 200) {
+      Map<String, dynamic> data = response.data!;
+      String bToken = data['token']!;
+      Map<String, dynamic> userInfo = data['userInfo']!;
+      final store = context.read<UserStore>();
+      await store.login(token: bToken, user: UserInfo.fromJson(userInfo));
+    } else if (response.code == 400) {
+      // 处理登录失败的情况，例如账号或密码错误
+      final errorMessage = response.data?['message'] ?? '登录失败，请检查账号和密码';
+      throw Exception(errorMessage);
+    } else {
+      throw Exception('登录失败，未知错误');
+    }
+  }
+
   Future<void> _login() async {
     // 避免重复点击
     if (_isLoading) return;
@@ -33,26 +52,30 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
-      final store = context.read<UserStore>();
-
-      // 模拟登录请求 — 后续换成真实 API
-      await Future.delayed(const Duration(seconds: 1));
-
-      // 假设登录成功，拿到服务端返回的数据
-      await store.login(
-        token: 'mock_token_abc123',
-        user: UserInfo(
-          id: 1,
-          account: _accountCtrl.text,
-          gender: 'male',
-          nickname: '用户${_accountCtrl.text}',
-        ),
-      );
-
-      if (!mounted) return;
-
-      // 登录成功后跳回首页
-      Navigator.pushReplacementNamed(context, '/');
+      final ApiResponse<Map<String, dynamic>> loginResponse = await HttpClient
+          .instance
+          .post(
+            '/user/login',
+            data: {
+              'account': _accountCtrl.text,
+              'password': _passwordCtrl.text,
+            },
+          );
+      try {
+        await _handlerLoginResponse(loginResponse);
+        // 登录成功后跳回首页
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, '/');
+      } catch (e) {
+        // print('处理登录时的正常错误，比如密码错误，用户不存在等：$e');
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
+        );
+        setState(() {
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       // 异常处理（可选，这里先恢复 loading 状态）
       setState(() {

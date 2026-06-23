@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:note_for_android/core/network/http_client.dart';
 import 'package:provider/provider.dart';
@@ -13,16 +14,53 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   final _accountCtrl = TextEditingController(text: 'test');
   final _passwordCtrl = TextEditingController(text: '123456');
+  final _captchaCodeCtrl = TextEditingController();
 
-  // 💡 新增控制状态
-  bool _obscurePassword = true; // 密码是否隐藏
-  bool _isLoading = false; // 是否正在登录中
+  bool _obscurePassword = true;
+  bool _isLoading = false;
+
+  // 验证码
+  String? _captchaImage; // base64 图片数据
+  String? _captchaKey; // 验证码标识 key
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchCaptcha();
+  }
 
   @override
   void dispose() {
     _accountCtrl.dispose();
     _passwordCtrl.dispose();
+    _captchaCodeCtrl.dispose();
     super.dispose();
+  }
+
+  /// 获取验证码
+  Future<void> _fetchCaptcha() async {
+    try {
+      final response = await HttpClient.instance.get<Map<String, dynamic>>(
+        '/captcha',
+      );
+      if (response.code == 200 && response.data != null) {
+        setState(() {
+          _captchaImage = response.data!['image'];
+          _captchaKey = response.data!['key'];
+        });
+      }
+    } catch (e) {
+      debugPrint('[AuthScreen] 获取验证码失败: $e');
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.orange,
+      ),
+    );
   }
 
   Future<void> _handlerLoginResponse(
@@ -35,8 +73,7 @@ class _AuthScreenState extends State<AuthScreen> {
       final store = context.read<UserStore>();
       await store.login(token: bToken, user: UserInfo.fromJson(userInfo));
     } else if (response.code == 400) {
-      // 处理登录失败的情况，例如账号或密码错误
-      final errorMessage = response.data?['message'] ?? '登录失败，请检查账号和密码';
+      final errorMessage = response.message ?? '登录失败，请检查账号和密码';
       throw Exception(errorMessage);
     } else {
       throw Exception('登录失败，未知错误');
@@ -44,12 +81,23 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _login() async {
-    // 避免重复点击
     if (_isLoading) return;
 
-    setState(() {
-      _isLoading = true;
-    });
+    // 基础表单验证
+    if (_accountCtrl.text.trim().isEmpty) {
+      _showError('请输入账号');
+      return;
+    }
+    if (_passwordCtrl.text.isEmpty) {
+      _showError('请输入密码');
+      return;
+    }
+    if (_captchaCodeCtrl.text.trim().isEmpty) {
+      _showError('请输入验证码');
+      return;
+    }
+
+    setState(() => _isLoading = true);
 
     try {
       final ApiResponse<Map<String, dynamic>> loginResponse = await HttpClient
@@ -59,47 +107,59 @@ class _AuthScreenState extends State<AuthScreen> {
             data: {
               'account': _accountCtrl.text,
               'password': _passwordCtrl.text,
+              'captchaKey': _captchaKey,
+              'captchaCode': _captchaCodeCtrl.text,
             },
           );
       try {
         await _handlerLoginResponse(loginResponse);
-        // 登录成功后跳回首页
         if (!mounted) return;
         Navigator.pushReplacementNamed(context, '/');
       } catch (e) {
-        // print('处理登录时的正常错误，比如密码错误，用户不存在等：$e');
         if (!mounted) return;
+        // 登录失败刷新验证码
+        _fetchCaptcha();
+        _captchaCodeCtrl.clear();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
         );
-        setState(() {
-          _isLoading = false;
-        });
+        setState(() => _isLoading = false);
       }
     } catch (e) {
-      // 异常处理（可选，这里先恢复 loading 状态）
-      setState(() {
-        _isLoading = false;
-      });
+      setState(() => _isLoading = false);
+    }
+  }
+
+  /// 将 base64 字符串转为可显示的 ImageProvider
+  ImageProvider? _captchaImageProvider() {
+    if (_captchaImage == null) return null;
+    try {
+      // 去除可能的 data:image/...;base64, 前缀
+      final raw = _captchaImage!.contains(',')
+          ? _captchaImage!.split(',').last
+          : _captchaImage!;
+      return MemoryImage(base64Decode(raw));
+    } catch (_) {
+      return null;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // 获取当前主题色，保证组件色彩和谐
     final theme = Theme.of(context);
 
     return Scaffold(
-      // 使用 SingleChildScrollView 防止键盘弹起时布局溢出报错（Overflow）
       body: SingleChildScrollView(
         child: Container(
-          // 让背景铺满整个屏幕高度
           height: MediaQuery.of(context).size.height,
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [theme.primaryColor.withOpacity(0.15), Colors.white],
+              colors: [
+                theme.primaryColor.withValues(alpha: 0.15),
+                Colors.white,
+              ],
             ),
           ),
           child: Padding(
@@ -108,7 +168,7 @@ class _AuthScreenState extends State<AuthScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // 1. 顶部 Logo 或 欢迎标语区
+                // 1. Logo
                 Icon(
                   Icons.lock_person_rounded,
                   size: 80,
@@ -132,7 +192,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
                 const SizedBox(height: 48),
 
-                // 2. 账号输入框
+                // 2. 账号
                 TextField(
                   controller: _accountCtrl,
                   decoration: InputDecoration(
@@ -150,7 +210,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
                 const SizedBox(height: 20),
 
-                // 3. 密码输入框
+                // 3. 密码
                 TextField(
                   controller: _passwordCtrl,
                   obscureText: _obscurePassword,
@@ -158,7 +218,6 @@ class _AuthScreenState extends State<AuthScreen> {
                     labelText: '密码',
                     hintText: '请输入密码',
                     prefixIcon: const Icon(Icons.lock_outline_rounded),
-                    // 💡 右侧切换密码显隐的小眼睛按钮
                     suffixIcon: IconButton(
                       icon: Icon(
                         _obscurePassword
@@ -166,9 +225,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             : Icons.visibility_outlined,
                       ),
                       onPressed: () {
-                        setState(() {
-                          _obscurePassword = !_obscurePassword;
-                        });
+                        setState(() => _obscurePassword = !_obscurePassword);
                       },
                     ),
                     border: OutlineInputBorder(
@@ -180,8 +237,67 @@ class _AuthScreenState extends State<AuthScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 20),
 
-                // 4. 忘记密码（预留视觉占位）
+                // 4. 验证码
+                Row(
+                  children: [
+                    // 验证码图片（点击可刷新）
+                    GestureDetector(
+                      onTap: _fetchCaptcha,
+                      child: Container(
+                        width: 120,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey.shade300),
+                          color: Colors.grey.shade100,
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(11),
+                          child: _captchaImage != null
+                              ? Image(
+                                  image: _captchaImageProvider()!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, _, _) =>
+                                      const Center(child: Text('加载失败')),
+                                )
+                              : const Center(
+                                  child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // 验证码输入框
+                    Expanded(
+                      child: TextField(
+                        controller: _captchaCodeCtrl,
+                        decoration: InputDecoration(
+                          labelText: '验证码',
+                          hintText: '点击图片刷新',
+                          prefixIcon: const Icon(Icons.security_outlined),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+
+                // 5. 忘记密码
                 Align(
                   alignment: Alignment.centerRight,
                   child: TextButton(
@@ -194,15 +310,15 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // 5. 登录按钮（包含优雅的 Loading 动效）
+                // 6. 登录按钮
                 ElevatedButton(
                   onPressed: _isLoading ? null : _login,
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     backgroundColor: theme.primaryColor,
                     foregroundColor: Colors.white,
-                    disabledBackgroundColor: theme.primaryColor.withOpacity(
-                      0.6,
+                    disabledBackgroundColor: theme.primaryColor.withValues(
+                      alpha: 0.6,
                     ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),

@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS `user` (
     `account`      VARCHAR(50)   NOT NULL                 COMMENT '账号（唯一）',
     `password`     VARCHAR(255)  NOT NULL                 COMMENT '密码（加密存储）',
     `nickname`     VARCHAR(50)   DEFAULT NULL             COMMENT '昵称',
+    `email`     VARCHAR(50)   DEFAULT NULL             COMMENT '邮箱',
     `phone_number` VARCHAR(20)   DEFAULT NULL             COMMENT '手机号',
     `avatar`       VARCHAR(500)  DEFAULT NULL             COMMENT '头像URL',
     PRIMARY KEY (`id`),

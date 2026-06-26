@@ -6,6 +6,8 @@ import org.springframework.web.bind.annotation.*;
 import org.template.model.User;
 import org.template.model.dto.LoginRequest;
 import org.template.model.dto.RegisterRequest;
+import org.template.model.dto.SendEmailCodeRequest;
+import org.template.model.dto.EmailLoginRequest;
 import org.template.model.dto.UpdateUserRequest;
 import org.template.model.vo.Result;
 import org.template.service.UserService;
@@ -140,7 +142,7 @@ public class UserController {
      * 更新用户信息
      * PUT /user/info
      */
-    @PutMapping("/info")
+    @PutMapping("/update-info")
     public Result<User> updateInfo(HttpServletRequest request,
                                    @RequestBody UpdateUserRequest req) {
         Integer userId = (Integer) request.getAttribute("userId");
@@ -169,6 +171,34 @@ public class UserController {
         try {
             userService.changePassword(userId, body.get("oldPwd"), body.get("newPwd"));
             return Result.success("密码修改成功");
+        } catch (IllegalArgumentException e) {
+            return Result.error(e.getMessage());
+        }
+    }
+
+    /**
+     * 发送邮箱验证码
+     * POST /user/send-email-code
+     */
+    @PostMapping("/send-email-code")
+    public Result<String> sendEmailCode(@RequestBody SendEmailCodeRequest req) {
+        try {
+            userService.sendEmailCode(req.getEmail());
+            return Result.success("验证码已发送到您的邮箱");
+        } catch (IllegalArgumentException e) {
+            return Result.error(e.getMessage());
+        }
+    }
+
+    /**
+     * 邮箱验证码登录（未注册邮箱自动创建账号）
+     * POST /user/email-login
+     */
+    @PostMapping("/email-login")
+    public Result<Map<String, Object>> emailLogin(@RequestBody EmailLoginRequest req) {
+        try {
+            Map<String, Object> data = userService.emailLogin(req.getEmail(), req.getCode());
+            return Result.success("登录成功", data);
         } catch (IllegalArgumentException e) {
             return Result.error(e.getMessage());
         }
